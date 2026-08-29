@@ -1,0 +1,14 @@
+{
+  "name": "scene-agent",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "decode:compressed": "node scripts/decode_compressed_ply.mjs"
+  },
+  "dependencies": {
+    "playcanvas": "2.3.3"
+  }
+}

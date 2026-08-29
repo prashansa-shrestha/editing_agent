@@ -1,0 +1,54 @@
+
+# Node dependencies and logs
+node_modules/
+npm-debug.log*
+
+# Generated project outputs
+outputs/
+artifacts/
+
+# Datasets and Gaussian scene files
+data/
+datasets/
+*.ply
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python caches, tests, and build artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+
+# Model weights and generated model artifacts
+models/
+weights/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx

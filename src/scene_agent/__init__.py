@@ -1,0 +1,71 @@
+"""Training-free Gaussian scene editing package.
+
+The first milestone intentionally keeps the public surface small: safe PLY
+inspection, canonical scene I/O, immutable-source decoder orchestration, and
+resource reporting.  Rendering, grouping, and editing are separate milestones
+and are not imported here.
+"""
+
+from .scene import (
+    CANONICAL_FIELD_COUNT,
+    CANONICAL_PROPERTY_NAMES,
+    CANONICAL_RECORD_BYTES,
+    CANONICAL_REQUIRED_RECORD_BYTES,
+    CanonicalComparison,
+    CanonicalInspection,
+    CanonicalScene,
+    ChildRSSMonitor,
+    CompressedInspection,
+    DecodeReport,
+    GaussianScene,
+    PLYError,
+    PLYValidationError,
+    DecoderError,
+    DecoderInvocationError,
+    DecoderUnavailableError,
+    MemoryBudgetExceeded,
+    OutputExistsError,
+    RuntimeMemoryReport,
+    current_child_peak_memory_bytes,
+    compare_canonical_ply,
+    decode_compressed_ply,
+    fingerprint_file,
+    inspect_compressed_ply,
+    load_canonical_ply,
+    resolve_safe_output_path,
+    sha256_file,
+    validate_canonical_ply,
+    write_canonical_ply,
+)
+
+__all__ = [
+    "CanonicalComparison",
+    "CanonicalInspection",
+    "CanonicalScene",
+    "ChildRSSMonitor",
+    "CANONICAL_FIELD_COUNT",
+    "CANONICAL_PROPERTY_NAMES",
+    "CANONICAL_RECORD_BYTES",
+    "CANONICAL_REQUIRED_RECORD_BYTES",
+    "CompressedInspection",
+    "DecodeReport",
+    "DecoderError",
+    "DecoderInvocationError",
+    "DecoderUnavailableError",
+    "GaussianScene",
+    "MemoryBudgetExceeded",
+    "OutputExistsError",
+    "PLYError",
+    "PLYValidationError",
+    "RuntimeMemoryReport",
+    "compare_canonical_ply",
+    "current_child_peak_memory_bytes",
+    "decode_compressed_ply",
+    "fingerprint_file",
+    "inspect_compressed_ply",
+    "load_canonical_ply",
+    "resolve_safe_output_path",
+    "sha256_file",
+    "validate_canonical_ply",
+    "write_canonical_ply",
+]
