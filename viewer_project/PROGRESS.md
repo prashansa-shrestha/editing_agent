@@ -9,8 +9,8 @@ viewer. It records project state; it does not replace `SPEC.md` or
 - Last updated: 2026-08-30
 - Current status: M0 complete; documentation independently reviewed; verdict
   **SHIP** for the M0 documentation milestone only.
-- Last checkpoint commit: pending until the primary agent creates the first
-  viewer checkpoint commit. This worker created no commit.
+- Last checkpoint commit: `99f2ef1` — `checkpoint: define viewer contract and
+  progress ledger`. This worker created no commit.
 - Current viewer files: `viewer_project/SPEC.md`,
   `viewer_project/AGENTS.md`, and this `viewer_project/PROGRESS.md` (the
   third file).
@@ -47,6 +47,9 @@ streaming, capture, or performance.
 
 - 2026-08-30 — M0 — Contract and fixture review: complete and independently
   reviewed, verdict SHIP. No scene or code changes were part of M0.
+- 2026-08-30 — M0 checkpoint `99f2ef1` — `checkpoint: define viewer contract
+  and progress ledger`: documentation-only checkpoint; implementation remains
+  pending.
 - M1 — Authentic source manifest and bounded stream: pending.
 - M2 — Thin interactive renderer: pending.
 - M3 — Bird's-eye and capture reproducibility: pending.
