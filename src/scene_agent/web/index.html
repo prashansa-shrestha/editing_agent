@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101a26">
+    <meta name="description" content="A local-first Gaussian scene inspection and round-trip workbench for Milestone 1A.">
+    <title>Gaussian Scene I/O Workbench</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="Gaussian Scene I/O Workbench home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 48 48" role="img" focusable="false">
+              <path d="M24 4 41 14v20L24 44 7 34V14L24 4Z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" />
+              <path d="m24 4 17 10-17 10L7 14 24 4Zm0 20v20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" />
+              <circle cx="24" cy="24" r="3.5" fill="currentColor" />
+            </svg>
+          </span>
+          <span class="brand-copy">
+            <span class="eyebrow">LOCAL-FIRST TOOL</span>
+            <span class="brand-name">Gaussian Scene I/O Workbench</span>
+          </span>
+        </a>
+
+        <div class="topbar-meta" aria-label="Application status">
+          <span class="server-indicator" aria-hidden="true"><span id="server-indicator-dot"></span></span>
+          <span id="server-status" role="status" aria-live="polite">Connecting to local server…</span>
+          <span class="milestone-badge">Milestone 1A</span>
+        </div>
+      </header>
+
+      <main id="main-content" class="main-content">
+        <section class="hero" aria-labelledby="page-title">
+          <div class="hero-copy">
+            <p class="section-kicker"><span class="kicker-rule" aria-hidden="true"></span> Safe scene I/O, made visible</p>
+            <h1 id="page-title">Inspect a packed scene.<br><em>Keep the source untouched.</em></h1>
+            <p class="hero-lede">A calm, local checkpoint for validating Gaussian-splat files before later editing work. Inspect the source, decode a canonical working copy, and prove that a no-op round trip remains lossless at the schema level.</p>
+          </div>
+          <div class="hero-note" aria-label="Milestone scope">
+            <span class="hero-note-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false"><path d="M12 3v18M3 12h18" /><circle cx="12" cy="12" r="8.5" /></svg>
+            </span>
+            <div>
+              <strong>CPU-only checkpoint</strong>
+              <p>Designed for a local machine or a modest Colab runtime. No upload, render, or model call is involved.</p>
+            </div>
+          </div>
+        </section>
+
+        <div class="workspace-grid">
+          <div class="primary-column">
+            <section class="panel source-panel" aria-labelledby="source-heading">
+              <div class="panel-heading">
+                <div class="step-number" aria-hidden="true">01</div>
+                <div>
+                  <p class="panel-kicker">Start with an immutable source</p>
+                  <h2 id="source-heading">Choose a compressed scene</h2>
+                </div>
+              </div>
+
+              <form id="source-form" class="operation-form">
+                <div class="field-group">
+                  <label for="source-path">Compressed scene path</label>
+                  <div class="input-with-action">
+                    <input id="source-path" name="source_path" type="text" spellcheck="false" autocomplete="off" value="/data/Desktop/Prashansa/major/scenebench/data/InteriorGS/0231_840445/3dgs_compressed.ply" aria-describedby="source-help">
+                    <button id="inspect-button" class="button button-primary" type="submit">
+                      <span class="button-label">Inspect source</span>
+                      <span class="button-arrow" aria-hidden="true">↗</span>
+                    </button>
+                  </div>
+                  <p id="source-help" class="field-help">The server reads this local path directly. The browser never uploads the file.</p>
+                </div>
+              </form>
+
+              <div id="source-summary" class="data-card" hidden aria-labelledby="source-summary-heading">
+                <div class="result-heading">
+                  <div>
+                    <p class="result-kicker">Source report</p>
+                    <h3 id="source-summary-heading">Schema looks ready to work with</h3>
+                  </div>
+                  <span id="source-report-badge" class="status-badge status-badge-neutral">Inspected</span>
+                </div>
+                <dl class="metrics-grid">
+                  <div class="metric metric-wide">
+                    <dt>Fingerprint</dt>
+                    <dd id="source-fingerprint" class="monospace value-wrap">Not reported</dd>
+                  </div>
+                  <div class="metric">
+                    <dt>Format</dt>
+                    <dd id="source-format">Not reported</dd>
+                  </div>
+                  <div class="metric">
+                    <dt>Gaussian count</dt>
+                    <dd id="source-count">Not reported</dd>
+                  </div>
+                  <div class="metric metric-wide">
+                    <dt>File size</dt>
+                    <dd id="source-size">Not reported</dd>
+                  </div>
+                </dl>
+                <div class="schema-block">
+                  <span class="schema-label">Schema</span>
+                  <p id="source-schema" class="schema-value">Not reported</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel decode-panel" aria-labelledby="decode-heading">
+              <div class="panel-heading">
+                <div class="step-number" aria-hidden="true">02</div>
+                <div>
+                  <p class="panel-kicker">Create a working representation</p>
+                  <h2 id="decode-heading">Decode to canonical PLY</h2>
+                </div>
+              </div>
+
+              <form id="decode-form" class="operation-form">
+                <div class="form-row">
+                  <div class="field-group field-grow">
+                    <label for="decode-output-name">Output name <span class="label-optional">optional</span></label>
+                    <input id="decode-output-name" name="output_name" type="text" spellcheck="false" autocomplete="off" placeholder="Let the server choose a safe name" aria-describedby="decode-help">
+                  </div>
+                  <button id="decode-button" class="button button-secondary" type="submit">
+                    <span class="button-label">Decode scene</span>
+                    <span class="button-arrow" aria-hidden="true">↘</span>
+                  </button>
+                </div>
+                <p id="decode-help" class="field-help">A new output is created under the server’s milestone output directory. Existing files are never overwritten.</p>
+              </form>
+
+              <div id="decode-result" class="data-card result-card" hidden aria-labelledby="decode-result-heading">
+                <div class="result-heading">
+                  <div>
+                    <p class="result-kicker">Decode report</p>
+                    <h3 id="decode-result-heading">Canonical copy published</h3>
+                  </div>
+                  <span id="decode-report-badge" class="status-badge status-badge-success">Complete</span>
+                </div>
+                <dl class="metrics-grid">
+                  <div class="metric">
+                    <dt>Runtime</dt>
+                    <dd id="decode-runtime">Not reported</dd>
+                  </div>
+                  <div class="metric">
+                    <dt>Peak RAM</dt>
+                    <dd id="decode-memory">Not reported</dd>
+                  </div>
+                  <div class="metric metric-wide">
+                    <dt>Decoded output</dt>
+                    <dd id="decode-output-path" class="monospace value-wrap">Not reported</dd>
+                  </div>
+                </dl>
+                <p id="decode-detail" class="result-detail">The output path below is now available for the no-op round trip.</p>
+              </div>
+            </section>
+
+            <section class="panel roundtrip-panel" aria-labelledby="roundtrip-heading">
+              <div class="panel-heading">
+                <div class="step-number" aria-hidden="true">03</div>
+                <div>
+                  <p class="panel-kicker">Check the safety boundary</p>
+                  <h2 id="roundtrip-heading">Validate a no-op round trip</h2>
+                </div>
+              </div>
+
+              <p class="panel-intro">Use the last successful decoded output to reload, write, and validate a canonical copy. This does not apply an edit.</p>
+              <form id="roundtrip-form" class="operation-form">
+                <div class="field-group">
+                  <label for="canonical-path">Canonical scene path</label>
+                  <div class="input-with-action">
+                    <input id="canonical-path" name="canonical_path" type="text" spellcheck="false" autocomplete="off" readonly placeholder="Decode a scene first" aria-describedby="roundtrip-help">
+                    <button id="roundtrip-button" class="button button-outline" type="submit" disabled>
+                      <span class="button-label">Run round trip</span>
+                      <span class="button-arrow" aria-hidden="true">↻</span>
+                    </button>
+                  </div>
+                  <p id="roundtrip-help" class="field-help">The decoded path is pinned here so the original compressed source cannot be used as an output target.</p>
+                </div>
+              </form>
+
+              <div id="roundtrip-result" class="data-card result-card" hidden aria-labelledby="roundtrip-result-heading">
+                <div class="result-heading">
+                  <div>
+                    <p class="result-kicker">Round-trip report</p>
+                    <h3 id="roundtrip-result-heading">Canonical validation complete</h3>
+                  </div>
+                  <span id="roundtrip-report-badge" class="status-badge status-badge-success">Verified</span>
+                </div>
+                <dl class="metrics-grid">
+                  <div class="metric">
+                    <dt>Runtime</dt>
+                    <dd id="roundtrip-runtime">Not reported</dd>
+                  </div>
+                  <div class="metric metric-wide">
+                    <dt>Validated output</dt>
+                    <dd id="roundtrip-output-path" class="monospace value-wrap">Not reported</dd>
+                  </div>
+                </dl>
+                <p id="roundtrip-detail" class="result-detail">No scene parameters were edited.</p>
+              </div>
+            </section>
+          </div>
+
+          <aside class="secondary-column" aria-label="Workbench context">
+            <section class="panel safety-panel" aria-labelledby="safety-heading">
+              <div class="safety-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><path d="M12 3.5 19 6v5.7c0 4.2-2.8 7.4-7 8.8-4.2-1.4-7-4.6-7-8.8V6l7-2.5Z" /><path d="m8.7 12 2.1 2.1 4.7-4.7" /></svg>
+              </div>
+              <div>
+                <p class="panel-kicker">Data safety</p>
+                <h2 id="safety-heading">Your source stays unchanged</h2>
+                <p>The workbench reads the compressed PLY and writes fresh artifacts into the milestone output area. It never edits the source file in place.</p>
+              </div>
+            </section>
+
+            <section id="activity-panel" class="panel activity-panel" aria-labelledby="activity-heading">
+              <div class="activity-heading">
+                <div>
+                  <p class="panel-kicker">Live activity</p>
+                  <h2 id="activity-heading">Workbench status</h2>
+                </div>
+                <span class="activity-pulse" aria-hidden="true"></span>
+              </div>
+              <div id="progress-region" class="progress-region" role="status" aria-live="polite" aria-atomic="true">
+                <span id="progress-icon" class="progress-icon" aria-hidden="true">✦</span>
+                <span id="progress-message">Ready when you are.</span>
+              </div>
+              <div id="error-panel" class="error-panel" role="alert" hidden>
+                <span class="error-icon" aria-hidden="true">!</span>
+                <div>
+                  <strong id="error-heading">Request could not finish</strong>
+                  <p id="error-message">Check the path and confirm that the local server is running.</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel outputs-panel" aria-labelledby="outputs-heading">
+              <div class="activity-heading">
+                <div>
+                  <p class="panel-kicker">Published artifacts</p>
+                  <h2 id="outputs-heading">Milestone outputs</h2>
+                </div>
+                <button id="refresh-outputs-button" class="icon-button" type="button" aria-label="Refresh milestone outputs" title="Refresh outputs">
+                  <svg viewBox="0 0 24 24" focusable="false"><path d="M20 11a8 8 0 0 0-14.7-4.2L4 9" /><path d="M4 4v5h5" /><path d="M4 13a8 8 0 0 0 14.7 4.2L20 15" /><path d="M20 20v-5h-5" /></svg>
+                </button>
+              </div>
+              <p class="panel-intro">Existing files in the server’s milestone output area appear here.</p>
+              <ul id="outputs-list" class="outputs-list" aria-live="polite">
+                <li id="outputs-empty" class="empty-output">Loading outputs…</li>
+              </ul>
+            </section>
+
+            <section class="scope-note" aria-labelledby="scope-heading">
+              <p class="panel-kicker">Inside this checkpoint</p>
+              <h2 id="scope-heading">A dependable I/O foundation</h2>
+              <ul class="scope-list">
+                <li><span aria-hidden="true">01</span><span>Compressed PLY inspection</span></li>
+                <li><span aria-hidden="true">02</span><span>Canonical CPU decode</span></li>
+                <li><span aria-hidden="true">03</span><span>No-op schema round trip</span></li>
+              </ul>
+              <p class="scope-footnote">Rendering, object grouping, natural-language planning, and scene edits arrive in later milestones.</p>
+            </section>
+          </aside>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <span>Gaussian Scene I/O Workbench</span>
+        <span class="footer-separator" aria-hidden="true">•</span>
+        <span>Local Milestone 1A</span>
+        <span class="footer-spacer"></span>
+        <span>Stop the server with <kbd>Ctrl</kbd><span aria-hidden="true">+</span><kbd>C</kbd></span>
+      </footer>
+    </div>
+  </body>
+</html>
