@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 import http.client
 import json
 from pathlib import Path
@@ -18,6 +19,8 @@ import pytest
 from scene_agent.scene import sha256_file
 from scene_agent.webapp import (
     MAX_JSON_BODY_BYTES,
+    PLAYCANVAS_MODULE_ROUTE,
+    PLAYCANVAS_VERSION,
     _HEAVY_OPERATION_LOCK,
     create_server,
     validate_bind_host,
@@ -91,6 +94,23 @@ def _request(
         connection.close()
 
 
+def _request_bytes(
+    port: int,
+    method: str,
+    path: str,
+    *,
+    body: bytes | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, dict[str, str], bytes]:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        connection.request(method, path, body=body, headers=headers or {})
+        response = connection.getresponse()
+        return response.status, {key.lower(): value for key, value in response.getheaders()}, response.read()
+    finally:
+        connection.close()
+
+
 def _post(port: int, path: str, payload: object) -> tuple[int, dict[str, str], dict[str, object]]:
     body = json.dumps(payload).encode("utf-8")
     return _request(
@@ -141,6 +161,116 @@ def test_status_is_local_cpu_only_json_without_cors(server_port: int):
     assert headers["content-type"].startswith("application/json")
     assert "access-control-allow-origin" not in headers
     assert headers["x-content-type-options"] == "nosniff"
+
+
+def test_exact_pinned_playcanvas_module_is_locally_served_without_cors(server_port: int):
+    expected = REPOSITORY_ROOT / "node_modules" / "playcanvas" / "build" / "playcanvas.mjs"
+    status, headers, body = _request_bytes(server_port, "GET", PLAYCANVAS_MODULE_ROUTE)
+
+    assert PLAYCANVAS_VERSION == "2.3.3"
+    assert status == 200
+    assert body == expected.read_bytes()
+    assert hashlib.sha256(body).hexdigest() == "4b18241d684e3676109100f61aa3ad3488f8f95f632fdbb4433290a315dbc875"
+    assert headers["content-type"] == "application/javascript; charset=utf-8"
+    assert headers["content-length"] == str(expected.stat().st_size)
+    assert headers["cache-control"] == "no-store"
+    assert headers["x-content-type-options"] == "nosniff"
+    assert headers["cross-origin-resource-policy"] == "same-origin"
+    assert "access-control-allow-origin" not in headers
+
+
+def test_page_csp_allows_only_the_local_playcanvas_sort_worker(server_port: int):
+    status, headers, body = _request_bytes(server_port, "GET", "/")
+
+    assert status == 200
+    assert b'type="module" src="/static/viewer.js"' in body
+    policy = headers["content-security-policy"]
+    assert "default-src 'self'" in policy
+    assert "connect-src 'self'" in policy
+    assert "script-src 'self'" in policy
+    assert "worker-src blob:" in policy
+    assert "unsafe-inline" not in policy
+    assert "unsafe-eval" not in policy
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "/vendor/playcanvas-2.3.3.js",
+        "/vendor/playcanvas-2.3.3.mjs/extra",
+        "/vendor/playcanvas-2.3.3.mjs?cache=1",
+        "/vendor/%2e%2e/package.json",
+        "/vendor/node_modules/playcanvas/build/playcanvas.mjs",
+    ],
+)
+def test_vendor_route_rejects_near_misses_queries_and_traversal(server_port: int, target: str):
+    status, headers, payload = _request(server_port, "GET", target)
+
+    assert status == 404
+    assert payload["ok"] is False
+    assert "access-control-allow-origin" not in headers
+
+
+@pytest.mark.parametrize("method", ["POST", "HEAD", "OPTIONS"])
+def test_playcanvas_module_allows_get_only(server_port: int, method: str):
+    body = b"{}" if method == "POST" else None
+    headers = {"Content-Type": "application/json", "Content-Length": "2"} if body else None
+    status, response_headers, payload = _request(
+        server_port,
+        method,
+        PLAYCANVAS_MODULE_ROUTE,
+        body=body,
+        headers=headers,
+    )
+
+    assert status == 405
+    assert response_headers["allow"] == "GET"
+    if method == "HEAD":
+        assert payload == {}
+    else:
+        assert payload["error"]["type"] == "method_not_allowed"
+
+
+@pytest.mark.parametrize("version", ["2.3.2", "2.3.4", "latest"])
+def test_server_fails_closed_for_mismatched_playcanvas_version(tmp_path: Path, version: str):
+    (tmp_path / "SPEC.md").write_text("spec", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("agents", encoding="utf-8")
+    package_root = tmp_path / "node_modules" / "playcanvas"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(json.dumps({"version": version}), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="PlayCanvas 2.3.3 is required"):
+        create_server("127.0.0.1", 0, repository_root=tmp_path, viewer_sources={})
+
+
+def test_server_fails_closed_when_pinned_playcanvas_module_is_missing(tmp_path: Path):
+    (tmp_path / "SPEC.md").write_text("spec", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("agents", encoding="utf-8")
+    package_root = tmp_path / "node_modules" / "playcanvas"
+    package_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"version": PLAYCANVAS_VERSION}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="PlayCanvas 2.3.3 installation is unavailable"):
+        create_server("127.0.0.1", 0, repository_root=tmp_path, viewer_sources={})
+
+
+def test_server_fails_closed_when_pinned_playcanvas_module_digest_differs(tmp_path: Path):
+    (tmp_path / "SPEC.md").write_text("spec", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("agents", encoding="utf-8")
+    package_root = tmp_path / "node_modules" / "playcanvas"
+    build_root = package_root / "build"
+    build_root.mkdir(parents=True)
+    (package_root / "package.json").write_text(
+        json.dumps({"version": PLAYCANVAS_VERSION}),
+        encoding="utf-8",
+    )
+    (build_root / "playcanvas.mjs").write_text("export const version = '2.3.3';", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="integrity validation"):
+        create_server("127.0.0.1", 0, repository_root=tmp_path, viewer_sources={})
 
 
 @pytest.mark.parametrize(

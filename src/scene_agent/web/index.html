@@ -4,10 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#101a26">
-    <meta name="description" content="A local-first Gaussian scene inspection and round-trip workbench for Milestone 1A.">
-    <title>Gaussian Scene I/O Workbench</title>
+    <meta name="description" content="A local-first Gaussian RGB viewer and scene I/O workbench.">
+    <title>Gaussian Scene Viewer &amp; I/O Workbench</title>
     <link rel="stylesheet" href="/static/styles.css">
     <script src="/static/app.js" defer></script>
+    <script type="module" src="/static/viewer.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -24,32 +25,82 @@
           </span>
           <span class="brand-copy">
             <span class="eyebrow">LOCAL-FIRST TOOL</span>
-            <span class="brand-name">Gaussian Scene I/O Workbench</span>
+            <span class="brand-name">Gaussian Scene Viewer &amp; I/O Workbench</span>
           </span>
         </a>
 
         <div class="topbar-meta" aria-label="Application status">
           <span class="server-indicator" aria-hidden="true"><span id="server-indicator-dot"></span></span>
           <span id="server-status" role="status" aria-live="polite">Connecting to local server…</span>
-          <span class="milestone-badge">Milestone 1A</span>
+          <span class="milestone-badge">I/O + Viewer M2</span>
         </div>
       </header>
 
       <main id="main-content" class="main-content">
         <section class="hero" aria-labelledby="page-title">
           <div class="hero-copy">
-            <p class="section-kicker"><span class="kicker-rule" aria-hidden="true"></span> Safe scene I/O, made visible</p>
-            <h1 id="page-title">Inspect a packed scene.<br><em>Keep the source untouched.</em></h1>
-            <p class="hero-lede">A calm, local checkpoint for validating Gaussian-splat files before later editing work. Inspect the source, decode a canonical working copy, and prove that a no-op round trip remains lossless at the schema level.</p>
+            <p class="section-kicker"><span class="kicker-rule" aria-hidden="true"></span> Authentic local RGB, safe scene I/O</p>
+            <h1 id="page-title">See the packed scene.<br><em>Keep the source untouched.</em></h1>
+            <p class="hero-lede">Inspect the immutable compressed source through the official pinned PlayCanvas renderer, or use the existing I/O tools to validate and round-trip a separate canonical working copy.</p>
           </div>
           <div class="hero-note" aria-label="Milestone scope">
             <span class="hero-note-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" focusable="false"><path d="M12 3v18M3 12h18" /><circle cx="12" cy="12" r="8.5" /></svg>
             </span>
             <div>
-              <strong>CPU-only checkpoint</strong>
-              <p>Designed for a local machine or a modest Colab runtime. No upload, render, or model call is involved.</p>
+              <strong>Local engineering viewer</strong>
+              <p>RGB rendering uses the local GPU through PlayCanvas. There is no upload, model call, scene understanding, or edit operation.</p>
             </div>
+          </div>
+        </section>
+
+        <section id="viewer-panel" class="panel viewer-panel" data-viewer-state="idle" aria-labelledby="viewer-heading">
+          <div class="viewer-heading-row">
+            <div>
+              <p class="panel-kicker">Official PlayCanvas 2.3.3 · RGB only</p>
+              <h2 id="viewer-heading">Interactive Gaussian scene</h2>
+              <p class="viewer-intro">The browser requests the allowlisted logical scene ID, then PlayCanvas streams and renders the exact compressed PLY. This view supplies RGB only—no depth, IDs, segmentation, semantics, or edit controls.</p>
+            </div>
+            <span id="viewer-state-badge" class="status-badge viewer-state viewer-state-idle" role="status" aria-live="polite">idle</span>
+          </div>
+
+          <div class="viewer-layout">
+            <div id="viewer-canvas-wrap" class="viewer-canvas-wrap">
+              <canvas id="viewer-canvas" tabindex="-1" role="application" aria-label="Interactive Z-up Gaussian RGB scene" aria-describedby="viewer-controls-help" aria-hidden="true"></canvas>
+              <div id="viewer-overlay" class="viewer-overlay">
+                <span class="viewer-reticle" aria-hidden="true"></span>
+                <strong id="viewer-overlay-title">Scene not loaded</strong>
+                <p id="viewer-overlay-message">Load the allowlisted scene to begin an official PlayCanvas RGB render.</p>
+              </div>
+            </div>
+
+            <aside class="viewer-sidebar" aria-label="Viewer source and controls">
+              <div class="viewer-actions" aria-label="Viewer actions">
+                <button id="viewer-load-button" class="button button-primary" type="button">Load RGB scene</button>
+                <div class="viewer-action-pair">
+                  <button id="viewer-reset-button" class="button button-outline" type="button" disabled>Reset view</button>
+                  <button id="viewer-fit-button" class="button button-outline" type="button" disabled>Fit scene</button>
+                </div>
+              </div>
+
+              <dl class="viewer-source-metadata">
+                <div><dt>Logical ID</dt><dd id="viewer-source-id" class="monospace">interiorgs_0231_840445</dd></div>
+                <div><dt>Format</dt><dd id="viewer-source-format">Awaiting manifest</dd></div>
+                <div><dt>Gaussians</dt><dd id="viewer-source-count">524,508 expected</dd></div>
+                <div><dt>World up</dt><dd id="viewer-source-up">+Z expected</dd></div>
+                <div><dt>SHA-256</dt><dd id="viewer-source-digest" class="monospace">Awaiting manifest</dd></div>
+              </dl>
+
+              <p id="viewer-controls-help" class="viewer-controls-help"><strong>Controls:</strong> drag to orbit around +Z; <kbd>Shift</kbd>+drag or right-drag to pan in the screen plane; wheel or <kbd>+</kbd>/<kbd>−</kbd> to zoom; arrow keys to orbit; <kbd>Shift</kbd>+arrows to pan; <kbd>0</kbd> resets; <kbd>F</kbd> fits.</p>
+              <p id="viewer-camera-summary" class="viewer-camera-summary">Camera unavailable until the scene is ready.</p>
+              <div id="viewer-error" class="error-panel viewer-error" role="alert" hidden>
+                <span class="error-icon" aria-hidden="true">!</span>
+                <div>
+                  <strong id="viewer-error-heading">Renderer stage failed</strong>
+                  <p id="viewer-error-message">Retry the local scene load.</p>
+                </div>
+              </div>
+            </aside>
           </div>
         </section>
 
@@ -264,16 +315,16 @@
                 <li><span aria-hidden="true">02</span><span>Canonical CPU decode</span></li>
                 <li><span aria-hidden="true">03</span><span>No-op schema round trip</span></li>
               </ul>
-              <p class="scope-footnote">Rendering, object grouping, natural-language planning, and scene edits arrive in later milestones.</p>
+              <p class="scope-footnote">The RGB viewer above is an inspection aid. Object grouping, natural-language planning, and scene editing are not provided here.</p>
             </section>
           </aside>
         </div>
       </main>
 
       <footer class="footer">
-        <span>Gaussian Scene I/O Workbench</span>
+        <span>Gaussian Scene Viewer &amp; I/O Workbench</span>
         <span class="footer-separator" aria-hidden="true">•</span>
-        <span>Local Milestone 1A</span>
+        <span>Local I/O + Viewer M2</span>
         <span class="footer-spacer"></span>
         <span>Stop the server with <kbd>Ctrl</kbd><span aria-hidden="true">+</span><kbd>C</kbd></span>
       </footer>

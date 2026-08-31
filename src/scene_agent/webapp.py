@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
+import hashlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
@@ -57,6 +59,65 @@ MAX_JSON_BODY_BYTES = 64 * 1024
 _ALLOWED_BIND_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _SAFE_OUTPUT_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _HEAVY_OPERATION_LOCK = threading.Lock()
+PLAYCANVAS_VERSION = "2.3.3"
+PLAYCANVAS_MODULE_ROUTE = f"/vendor/playcanvas-{PLAYCANVAS_VERSION}.mjs"
+_PLAYCANVAS_MODULE_RELATIVE = Path("node_modules/playcanvas/build/playcanvas.mjs")
+_PLAYCANVAS_PACKAGE_RELATIVE = Path("node_modules/playcanvas/package.json")
+_PLAYCANVAS_MODULE_SHA256 = "4b18241d684e3676109100f61aa3ad3488f8f95f632fdbb4433290a315dbc875"
+_VENDOR_STREAM_CHUNK_BYTES = 256 * 1024
+
+
+@dataclass(frozen=True)
+class PinnedPlayCanvasModule:
+    """One exact, locally installed PlayCanvas browser bundle."""
+
+    path: Path
+    identity: tuple[int, int, int, int, int, int]
+    size_bytes: int
+
+
+def _file_identity(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _pin_playcanvas_module(repository_root: Path) -> PinnedPlayCanvasModule:
+    """Verify the exact pinned package and bundle before opening the server."""
+
+    package_path = repository_root / _PLAYCANVAS_PACKAGE_RELATIVE
+    module_path = repository_root / _PLAYCANVAS_MODULE_RELATIVE
+    try:
+        package_info = package_path.lstat()
+        if not stat.S_ISREG(package_info.st_mode) or stat.S_ISLNK(package_info.st_mode):
+            raise RuntimeError("pinned PlayCanvas package metadata is unavailable")
+        if package_info.st_size > 256 * 1024:
+            raise RuntimeError("pinned PlayCanvas package metadata is invalid")
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+        if not isinstance(package, dict) or package.get("version") != PLAYCANVAS_VERSION:
+            raise RuntimeError(f"PlayCanvas {PLAYCANVAS_VERSION} is required")
+
+        module_info = module_path.lstat()
+        if not stat.S_ISREG(module_info.st_mode) or stat.S_ISLNK(module_info.st_mode):
+            raise RuntimeError("pinned PlayCanvas browser module is unavailable")
+        digest = hashlib.sha256()
+        with module_path.open("rb") as handle:
+            for block in iter(lambda: handle.read(_VENDOR_STREAM_CHUNK_BYTES), b""):
+                digest.update(block)
+        if digest.hexdigest() != _PLAYCANVAS_MODULE_SHA256:
+            raise RuntimeError("pinned PlayCanvas browser module failed integrity validation")
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("pinned PlayCanvas 2.3.3 installation is unavailable") from exc
+    return PinnedPlayCanvasModule(
+        path=module_path,
+        identity=_file_identity(module_info),
+        size_bytes=module_info.st_size,
+    )
 
 
 class APIError(Exception):
@@ -355,6 +416,10 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
     @property
     def viewer_operation_slots(self) -> threading.BoundedSemaphore:
         return self.server.viewer_operation_slots  # type: ignore[attr-defined]
+
+    @property
+    def playcanvas_module(self) -> PinnedPlayCanvasModule:
+        return self.server.playcanvas_module  # type: ignore[attr-defined]
 
     def log_message(self, format: str, *args: object) -> None:
         # Keep the launcher quiet by default and avoid logging user-supplied paths.
@@ -772,10 +837,66 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
             self.send_header(
                 "Content-Security-Policy",
                 "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; "
-                "connect-src 'self'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'",
+                "connect-src 'self'; img-src 'self' data:; object-src 'none'; script-src 'self'; "
+                "style-src 'self'; worker-src blob:",
             )
         self.end_headers()
         self.wfile.write(body)
+
+    def _serve_playcanvas_module(self) -> None:
+        """Stream only the exact verified browser bundle, never node_modules generally."""
+
+        try:
+            target = urlsplit(self.path)
+        except ValueError:
+            target = None
+        if (
+            target is None
+            or target.path != PLAYCANVAS_MODULE_ROUTE
+            or target.query
+            or target.fragment
+        ):
+            self._send_api_error(
+                APIError(HTTPStatus.NOT_FOUND, "not_found", "vendor module was not found")
+            )
+            return
+        pinned = self.playcanvas_module
+        try:
+            path_info = pinned.path.lstat()
+            if (
+                not stat.S_ISREG(path_info.st_mode)
+                or stat.S_ISLNK(path_info.st_mode)
+                or _file_identity(path_info) != pinned.identity
+            ):
+                raise OSError("module identity changed")
+            handle = pinned.path.open("rb")
+            descriptor_info = os.fstat(handle.fileno())
+            if _file_identity(descriptor_info) != pinned.identity:
+                handle.close()
+                raise OSError("module identity changed")
+        except OSError:
+            self._send_api_error(
+                APIError(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    "renderer_unavailable",
+                    f"the pinned PlayCanvas {PLAYCANVAS_VERSION} module is unavailable",
+                )
+            )
+            return
+
+        with handle:
+            self.send_response(HTTPStatus.OK)
+            self._headers("application/javascript; charset=utf-8", pinned.size_bytes)
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            self.end_headers()
+            try:
+                while True:
+                    block = handle.read(_VENDOR_STREAM_CHUNK_BYTES)
+                    if not block:
+                        break
+                    self.wfile.write(block)
+            except (BrokenPipeError, ConnectionError):
+                self.close_connection = True
 
     def do_GET(self) -> None:
         path = self._path()
@@ -785,6 +906,8 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
             self._serve_viewer_manifest()
         elif path == "/api/viewer/source" or path.startswith("/api/viewer/source/"):
             self._serve_viewer_source()
+        elif path == PLAYCANVAS_MODULE_ROUTE:
+            self._serve_playcanvas_module()
         elif path == "/api/status":
             self._send_json(
                 HTTPStatus.OK,
@@ -819,7 +942,11 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
         ):
             self._method_not_allowed("GET")
             return
-        if path in {"/api/status", "/api/outputs"} or path == "/" or path.startswith("/static/"):
+        if (
+            path in {"/api/status", "/api/outputs", PLAYCANVAS_MODULE_ROUTE}
+            or path == "/"
+            or path.startswith("/static/")
+        ):
             self._method_not_allowed("GET")
             return
         operations = {
@@ -856,7 +983,9 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         path = self._path()
-        if path == "/api/viewer/manifest" or (
+        if path == PLAYCANVAS_MODULE_ROUTE:
+            self._method_not_allowed("GET")
+        elif path == "/api/viewer/manifest" or (
             path is not None
             and (path == "/api/viewer/source" or path.startswith("/api/viewer/source/"))
         ):
@@ -866,7 +995,9 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         path = self._path()
-        if path == "/api/viewer/manifest" or (
+        if path == PLAYCANVAS_MODULE_ROUTE:
+            self._method_not_allowed("GET")
+        elif path == "/api/viewer/manifest" or (
             path is not None
             and (path == "/api/viewer/source" or path.startswith("/api/viewer/source/"))
         ):
@@ -900,6 +1031,8 @@ def create_server(
     """Create, but do not start, a loopback-only threaded HTTP server."""
 
     normalized_host = validate_bind_host(host)
+    resolved_repository_root = find_repository_root(repository_root).resolve()
+    playcanvas_module = _pin_playcanvas_module(resolved_repository_root)
     configured_viewer_sources = normalize_viewer_sources(viewer_sources)
     if not isinstance(port, int) or isinstance(port, bool) or not 0 <= port <= 65535:
         raise ValueError("port must be an integer between 0 and 65535")
@@ -909,12 +1042,13 @@ def create_server(
         else LocalThreadingHTTPServer
     )
     server = server_type((normalized_host, port), SceneAgentRequestHandler)
-    server.repository_root = find_repository_root(repository_root).resolve()  # type: ignore[attr-defined]
+    server.repository_root = resolved_repository_root  # type: ignore[attr-defined]
     configured_web_root = (
         Path(web_root) if web_root is not None else Path(__file__).with_name("web")
     )
     server.web_root = configured_web_root.resolve(strict=False)  # type: ignore[attr-defined]
     server.viewer_sources = configured_viewer_sources  # type: ignore[attr-defined]
+    server.playcanvas_module = playcanvas_module  # type: ignore[attr-defined]
     server.viewer_operation_slots = threading.BoundedSemaphore(  # type: ignore[attr-defined]
         MAX_CONCURRENT_VIEWER_OPERATIONS
     )
