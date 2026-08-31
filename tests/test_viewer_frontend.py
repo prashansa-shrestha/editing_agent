@@ -211,7 +211,13 @@ def test_ready_follows_official_sort_and_settled_render_frames():
     assert 'elements.viewer_canvas.tabIndex = ready ? 0 : -1' in VIEWER_JS
     assert '#viewer-canvas.is-render-visible' in STYLES
     assert 'transition: opacity' not in STYLES
-    assert '.viewer-overlay {' in STYLES and '#07101a' in STYLES
+    canvas_wrap_styles = STYLES.split('.viewer-canvas-wrap {', 1)[1].split('}', 1)[0]
+    overlay_styles = STYLES.split('.viewer-overlay {', 1)[1].split('}', 1)[0]
+    assert 'background: #000000' in canvas_wrap_styles
+    assert 'background: #000000' in overlay_styles
+    canvas_focus_styles = STYLES.split('#viewer-canvas:focus-visible {', 1)[1].split('}', 1)[0]
+    assert 'inset 0 0 0 2px #ffffff' in canvas_focus_styles
+    assert 'inset 0 0 0 4px #000000' in canvas_focus_styles
 
 
 def test_viewer_ui_preserves_workbench_and_exposes_rgb_only_controls():
