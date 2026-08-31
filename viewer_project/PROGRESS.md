@@ -10,11 +10,10 @@ viewer. It records project state; it does not replace `SPEC.md` or
 - Current status: M0, M1, and M2 complete. M2 was freshly independently
   reviewed; verdict **SHIP** for the authentic thin interactive RGB renderer
   milestone. M3 is the first incomplete milestone.
-- Last completed checkpoint commit: `34e3a33` — `checkpoint: add safe viewer
-  scene streaming`. The M0 documentation checkpoint `99f2ef1` remains in the
-  milestone history. The M2 checkpoint commit is pending immediately after
-  this ledger update; no M2 hash exists yet. This documentation update creates
-  no commit.
+- Last completed checkpoint commit: `99b265d` — `checkpoint: add interactive
+  Gaussian viewer`. The M1 checkpoint `34e3a33` and M0 documentation
+  checkpoint `99f2ef1` remain in the milestone history. This documentation
+  update creates no commit.
 - Current viewer files: `viewer_project/SPEC.md`,
   `viewer_project/AGENTS.md`, `viewer_project/PROGRESS.md`, the M1 files
   `src/scene_agent/viewer.py`, `src/scene_agent/webapp.py`, and
@@ -36,8 +35,8 @@ viewer. It records project state; it does not replace `SPEC.md` or
   with decompression disabled. It is an RGB-only interactive renderer; M3
   bird's-eye framing and capture work remain unimplemented.
 - The immutable source remains unchanged. No generated capture/artifact,
-  source mutation, or push exists; M1 checkpoint `34e3a33` records the last
-  completed implementation checkpoint, and the M2 checkpoint is pending.
+  source mutation, or push exists; M2 checkpoint `99b265d` — `checkpoint: add
+  interactive Gaussian viewer` records the completed implementation.
 - Preserve these unrelated pre-existing workspace changes; never stage them:
   root `SPEC.md` is modified, and root `editing_agent/` is untracked.
   Existing viewer specification files are also not to be overwritten.
@@ -137,9 +136,9 @@ gates.
   orbit/zoom, exact Reset/Fit behavior, reload camera stability, and honest
   renderer-error state behavior; no console or runtime errors were observed.
   The viewer remains RGB-only.
-- 2026-08-31 — M2 checkpoint: pending immediately after this ledger update;
-  no commit hash exists yet. Preserve the M0/M1 checkpoints and unrelated
-  workspace changes when creating the M2 checkpoint.
+- 2026-08-31 — M2 checkpoint `99b265d` — `checkpoint: add interactive Gaussian
+  viewer`: implementation checkpoint; M3 is the next action. No push exists;
+  the M0/M1 checkpoints and unrelated workspace changes remain preserved.
 
 ## Blockers
 
