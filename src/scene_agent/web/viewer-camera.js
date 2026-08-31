@@ -9,6 +9,15 @@ export const CAMERA_DEFAULTS = Object.freeze({
   maxElevationDegrees: 85,
 });
 
+export const REFERENCE_CAMERA = Object.freeze({
+  width: 1280,
+  height: 720,
+  pixelRatio: 1,
+  margin: 1.10,
+  epsilon: 1e-6,
+  algorithm: "zup_aabb_v1",
+});
+
 const MIN_DISTANCE = 1e-4;
 
 function finiteNumber(value, label) {
@@ -130,6 +139,59 @@ export function fitCameraState(state, aabb, aspect) {
     distance: fitDistance(bounds.radius, aspect),
     radius: bounds.radius,
   });
+}
+
+export function zupAabbCamera(
+  aabb,
+  width = REFERENCE_CAMERA.width,
+  height = REFERENCE_CAMERA.height,
+) {
+  const bounds = validateAabb(aabb);
+  if (
+    !Number.isSafeInteger(width)
+    || !Number.isSafeInteger(height)
+    || width <= 0
+    || height <= 0
+  ) {
+    throw new Error("camera viewport must use positive integer dimensions");
+  }
+  const [extentX, extentY, extentZ] = bounds.extents;
+  const aspect = width / height;
+  const spanY = REFERENCE_CAMERA.margin * Math.max(
+    extentY,
+    extentX / aspect,
+    REFERENCE_CAMERA.epsilon,
+  );
+  const orthographicHeight = spanY / 2;
+  const clearance = Math.max(extentX, extentY, extentZ, 1.0);
+  const zCamera = bounds.max[2] + 2 * clearance;
+  const near = Math.max(1e-4, zCamera - bounds.max[2] - clearance / 2);
+  const far = zCamera - bounds.min[2] + clearance / 2;
+  if (
+    ![
+      aspect,
+      spanY,
+      orthographicHeight,
+      clearance,
+      zCamera,
+      near,
+      far,
+    ].every(Number.isFinite)
+    || far <= near
+  ) {
+    throw new Error("deterministic bird's-eye camera is non-finite");
+  }
+  return {
+    projection: "orthographic",
+    position: [bounds.center[0], bounds.center[1], zCamera],
+    target: [...bounds.center],
+    view_up: [0, 1, 0],
+    near,
+    far,
+    orthographic_height: orthographicHeight,
+    viewport_px: [width, height],
+    pixel_ratio: REFERENCE_CAMERA.pixelRatio,
+  };
 }
 
 export function orbitCameraState(state, deltaYawDegrees, deltaElevationDegrees) {

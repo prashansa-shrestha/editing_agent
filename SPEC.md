@@ -693,3 +693,4 @@ Stop and request direction if:
 - Required writes fall outside the authorized repository/output paths.
 - A proposed dependency requires materially more RAM/VRAM than the target hardware.
 - A design decision would change the research claim or evaluation protocol.
+

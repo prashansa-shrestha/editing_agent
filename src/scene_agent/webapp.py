@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import hashlib
+import hmac
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
@@ -18,6 +19,17 @@ import stat
 import threading
 from typing import Mapping, Sequence
 from urllib.parse import parse_qsl, unquote, urlsplit
+
+from .capture import (
+    CaptureOutputError,
+    InvalidCapture,
+    InvalidCapturePNG,
+    MAX_CAPTURE_BODY_BYTES,
+    MAX_CONCURRENT_CAPTURE_WRITES,
+    ViewerSessionStore,
+    decode_capture_payload,
+    save_reference_capture,
+)
 
 from .scene import (
     DecoderInvocationError,
@@ -41,6 +53,7 @@ from .scene import (
 from .viewer import (
     InvalidSceneID,
     InvalidViewerSource,
+    DEFAULT_SCENE_ID,
     MAX_CONCURRENT_VIEWER_OPERATIONS,
     PinnedViewerSource,
     ViewerSourceConfig,
@@ -65,6 +78,10 @@ _PLAYCANVAS_MODULE_RELATIVE = Path("node_modules/playcanvas/build/playcanvas.mjs
 _PLAYCANVAS_PACKAGE_RELATIVE = Path("node_modules/playcanvas/package.json")
 _PLAYCANVAS_MODULE_SHA256 = "4b18241d684e3676109100f61aa3ad3488f8f95f632fdbb4433290a315dbc875"
 _VENDOR_STREAM_CHUNK_BYTES = 256 * 1024
+_CAPTURE_CONTENT_TYPE = re.compile(
+    r'^\s*application/json\s*;\s*charset\s*=\s*(?:utf-8|"utf-8")\s*$',
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -128,6 +145,44 @@ class APIError(Exception):
         self.status = status
         self.error_type = error_type
         self.message = message
+
+
+def _parse_json_object(raw: bytes) -> dict[str, object]:
+    """Decode strict UTF-8 JSON with unique object keys and finite constants."""
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise APIError(
+            HTTPStatus.BAD_REQUEST,
+            "malformed_json",
+            "JSON body must be UTF-8",
+        ) from exc
+
+    def reject_duplicate_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON field")
+            result[key] = value
+        return result
+
+    def reject_nonstandard_constant(_value: str) -> object:
+        raise ValueError("non-standard JSON constant")
+
+    try:
+        parsed = json.loads(
+            text,
+            object_pairs_hook=reject_duplicate_pairs,
+            parse_constant=reject_nonstandard_constant,
+        )
+    except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+        raise APIError(
+            HTTPStatus.BAD_REQUEST,
+            "malformed_json",
+            "request body is not valid JSON",
+        ) from exc
+    return _require_object(parsed)
 
 
 def validate_bind_host(host: str) -> str:
@@ -421,6 +476,18 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
     def playcanvas_module(self) -> PinnedPlayCanvasModule:
         return self.server.playcanvas_module  # type: ignore[attr-defined]
 
+    @property
+    def viewer_session_store(self) -> ViewerSessionStore:
+        return self.server.viewer_session_store  # type: ignore[attr-defined]
+
+    @property
+    def capture_write_slots(self) -> threading.BoundedSemaphore:
+        return self.server.capture_write_slots  # type: ignore[attr-defined]
+
+    @property
+    def capture_scene_id(self) -> str | None:
+        return self.server.capture_scene_id  # type: ignore[attr-defined]
+
     def log_message(self, format: str, *args: object) -> None:
         # Keep the launcher quiet by default and avoid logging user-supplied paths.
         del format, args
@@ -581,6 +648,95 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
             raise InvalidSceneID("scene identifier is invalid") from exc
         return validate_scene_id(scene_id)
 
+    def _active_viewer_origin(self) -> str:
+        host_headers = self.headers.get_all("Host", failobj=[])
+        if len(host_headers) != 1 or not _is_loopback_host_header(host_headers[0]):
+            raise APIError(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_host",
+                "Host must identify an explicit loopback address",
+            )
+        return f"http://{host_headers[0].strip().lower()}"
+
+    def _serve_viewer_session(self) -> None:
+        try:
+            target = urlsplit(self.path)
+        except ValueError:
+            target = None
+        if (
+            target is None
+            or target.path != "/api/viewer/session"
+            or target.query
+            or target.fragment
+        ):
+            self._send_api_error(
+                APIError(HTTPStatus.NOT_FOUND, "not_found", "viewer session route was not found")
+            )
+            return
+        origin = self._active_viewer_origin()
+        client = str(self.client_address[0])
+        token, expires_in_seconds = self.viewer_session_store.issue(
+            origin=origin,
+            client=client,
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "viewer_session": {
+                    "csrf_token": token,
+                    "expires_in_seconds": expires_in_seconds,
+                },
+            },
+        )
+
+    def _authorize_capture_request(self) -> None:
+        try:
+            target = urlsplit(self.path)
+        except ValueError as exc:
+            raise APIError(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_request_target",
+                "request target is malformed",
+            ) from exc
+        if target.path != "/api/viewer/captures" or target.query or target.fragment:
+            raise APIError(
+                HTTPStatus.NOT_FOUND,
+                "not_found",
+                "capture route was not found",
+            )
+        origin_headers = self.headers.get_all("Origin", failobj=[])
+        if len(origin_headers) != 1:
+            raise APIError(
+                HTTPStatus.FORBIDDEN,
+                "invalid_origin",
+                "capture requires exactly one active viewer Origin",
+            )
+        origin = origin_headers[0]
+        expected_origin = self._active_viewer_origin()
+        if (
+            not isinstance(origin, str)
+            or len(origin) > 512
+            or origin == "null"
+            or not hmac.compare_digest(origin, expected_origin)
+        ):
+            raise APIError(
+                HTTPStatus.FORBIDDEN,
+                "invalid_origin",
+                "capture Origin does not match the active viewer",
+            )
+        token_headers = self.headers.get_all("X-Viewer-CSRF", failobj=[])
+        if len(token_headers) != 1 or not self.viewer_session_store.validate(
+            token_headers[0],
+            origin=origin,
+            client=str(self.client_address[0]),
+        ):
+            raise APIError(
+                HTTPStatus.FORBIDDEN,
+                "invalid_csrf",
+                "capture session token is absent, invalid, or expired",
+            )
+
     def _serve_viewer_manifest(self) -> None:
         if not self.viewer_operation_slots.acquire(blocking=False):
             self._send_api_error(
@@ -633,15 +789,7 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
         finally:
             self.viewer_operation_slots.release()
 
-    def _read_json(self) -> dict[str, object]:
-        content_type = self.headers.get("Content-Type", "")
-        media_type = content_type.split(";", 1)[0].strip().lower()
-        if media_type != "application/json":
-            raise APIError(
-                HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
-                "unsupported_media_type",
-                "POST requests require application/json",
-            )
+    def _read_declared_body(self, maximum_bytes: int, too_large_message: str) -> bytes:
         transfer_encodings = self.headers.get_all("Transfer-Encoding", failobj=[])
         if transfer_encodings:
             self.close_connection = True
@@ -677,12 +825,12 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
                 "Content-Length must be one canonical ASCII-decimal integer",
             )
         length = int(raw_length, 10)
-        if length > MAX_JSON_BODY_BYTES:
+        if length > maximum_bytes:
             self.close_connection = True
             raise APIError(
                 HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
                 "body_too_large",
-                f"JSON body exceeds {MAX_JSON_BODY_BYTES} bytes",
+                too_large_message,
             )
         raw = self.rfile.read(length)
         if len(raw) != length:
@@ -692,41 +840,36 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
                 "truncated_body",
                 "request body ended before Content-Length bytes were received",
             )
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
+        return raw
+
+    def _read_json(self) -> dict[str, object]:
+        content_type = self.headers.get("Content-Type", "")
+        media_type = content_type.split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
             raise APIError(
-                HTTPStatus.BAD_REQUEST,
-                "malformed_json",
-                "JSON body must be UTF-8",
-            ) from exc
-
-        def reject_duplicate_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
-            result: dict[str, object] = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValueError("duplicate JSON field")
-                result[key] = value
-            return result
-
-        def reject_nonstandard_constant(_value: str) -> object:
-            raise ValueError("non-standard JSON constant")
-
-        try:
-            parsed = json.loads(
-                text,
-                object_pairs_hook=reject_duplicate_pairs,
-                parse_constant=reject_nonstandard_constant,
+                HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_media_type",
+                "POST requests require application/json",
             )
-        except APIError:
-            raise
-        except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+        raw = self._read_declared_body(
+            MAX_JSON_BODY_BYTES,
+            f"JSON body exceeds {MAX_JSON_BODY_BYTES} bytes",
+        )
+        return _parse_json_object(raw)
+
+    def _read_capture_json(self) -> dict[str, object]:
+        content_types = self.headers.get_all("Content-Type", failobj=[])
+        if len(content_types) != 1 or _CAPTURE_CONTENT_TYPE.fullmatch(content_types[0]) is None:
             raise APIError(
-                HTTPStatus.BAD_REQUEST,
-                "malformed_json",
-                "request body is not valid JSON",
-            ) from exc
-        return _require_object(parsed)
+                HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_media_type",
+                "capture requires application/json; charset=utf-8",
+            )
+        raw = self._read_declared_body(
+            MAX_CAPTURE_BODY_BYTES,
+            f"capture body exceeds {MAX_CAPTURE_BODY_BYTES} bytes",
+        )
+        return _parse_json_object(raw)
 
     def _dispatch_operation(self, operation, payload: Mapping[str, object]) -> None:
         try:
