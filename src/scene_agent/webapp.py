@@ -15,7 +15,7 @@ import socket
 import stat
 import threading
 from typing import Mapping, Sequence
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from .scene import (
     DecoderInvocationError,
@@ -35,6 +35,19 @@ from .scene import (
     milestone_output_root,
     validate_canonical_ply,
     write_canonical_ply,
+)
+from .viewer import (
+    InvalidSceneID,
+    InvalidViewerSource,
+    MAX_CONCURRENT_VIEWER_OPERATIONS,
+    PinnedViewerSource,
+    ViewerSourceConfig,
+    ViewerSourceChanged,
+    ViewerSourceUnavailable,
+    build_viewer_manifest,
+    normalize_viewer_sources,
+    open_viewer_stream,
+    validate_scene_id,
 )
 
 
@@ -335,6 +348,14 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
     def web_root(self) -> Path:
         return self.server.web_root  # type: ignore[attr-defined]
 
+    @property
+    def viewer_sources(self) -> Mapping[str, PinnedViewerSource]:
+        return self.server.viewer_sources  # type: ignore[attr-defined]
+
+    @property
+    def viewer_operation_slots(self) -> threading.BoundedSemaphore:
+        return self.server.viewer_operation_slots  # type: ignore[attr-defined]
+
     def log_message(self, format: str, *args: object) -> None:
         # Keep the launcher quiet by default and avoid logging user-supplied paths.
         del format, args
@@ -428,6 +449,124 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def _viewer_error(self, error: Exception) -> None:
+        if isinstance(error, InvalidSceneID):
+            api_error = APIError(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_scene_id",
+                "scene identifier is invalid",
+            )
+        elif isinstance(error, ViewerSourceUnavailable):
+            api_error = APIError(
+                HTTPStatus.NOT_FOUND,
+                "scene_unavailable",
+                "viewer scene is unavailable",
+            )
+        elif isinstance(error, InvalidViewerSource):
+            api_error = APIError(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                "invalid_viewer_source",
+                "viewer source is not a valid supported compressed PLY",
+            )
+        elif isinstance(error, ViewerSourceChanged):
+            api_error = APIError(
+                HTTPStatus.CONFLICT,
+                "source_changed",
+                "viewer source changed during the operation",
+            )
+        else:
+            api_error = APIError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "operation_failed",
+                "the local viewer operation could not be completed",
+            )
+        self._send_api_error(api_error)
+
+    def _manifest_scene_id(self) -> str:
+        try:
+            target = urlsplit(self.path)
+            if target.fragment or len(target.query) > 512:
+                raise ValueError("invalid viewer query")
+            fields = parse_qsl(
+                target.query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                encoding="utf-8",
+                errors="strict",
+                max_num_fields=2,
+            )
+        except (UnicodeError, ValueError) as exc:
+            raise InvalidSceneID("scene identifier is invalid") from exc
+        if len(fields) != 1 or fields[0][0] != "scene_id":
+            raise InvalidSceneID("scene identifier is invalid")
+        return validate_scene_id(fields[0][1])
+
+    def _source_scene_id(self) -> str:
+        prefix = "/api/viewer/source/"
+        try:
+            target = urlsplit(self.path)
+            if target.query or target.fragment or not target.path.startswith(prefix):
+                raise ValueError("invalid viewer source target")
+            encoded_id = target.path[len(prefix) :]
+            if len(encoded_id) > 256:
+                raise ValueError("viewer source identifier is too long")
+            scene_id = unquote(encoded_id, encoding="utf-8", errors="strict")
+        except (UnicodeError, ValueError) as exc:
+            raise InvalidSceneID("scene identifier is invalid") from exc
+        return validate_scene_id(scene_id)
+
+    def _serve_viewer_manifest(self) -> None:
+        if not self.viewer_operation_slots.acquire(blocking=False):
+            self._send_api_error(
+                APIError(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    "viewer_busy",
+                    "another viewer operation is already running",
+                )
+            )
+            return
+        try:
+            try:
+                scene_id = self._manifest_scene_id()
+                manifest = build_viewer_manifest(self.viewer_sources, scene_id)
+            except Exception as exc:
+                self._viewer_error(exc)
+                return
+        finally:
+            self.viewer_operation_slots.release()
+        self._send_json(HTTPStatus.OK, {"ok": True, **manifest.as_dict()})
+
+    def _serve_viewer_source(self) -> None:
+        if not self.viewer_operation_slots.acquire(blocking=False):
+            self._send_api_error(
+                APIError(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    "viewer_busy",
+                    "another viewer operation is already running",
+                )
+            )
+            return
+        headers_sent = False
+        try:
+            scene_id = self._source_scene_id()
+            with open_viewer_stream(self.viewer_sources, scene_id) as (source, fingerprint):
+                self.send_response(HTTPStatus.OK)
+                self._headers("application/octet-stream", fingerprint.size_bytes)
+                self.send_header("Digest", fingerprint.digest_header)
+                self.send_header("X-Scene-SHA256", fingerprint.sha256)
+                self.end_headers()
+                headers_sent = True
+                source.stream_to(self.wfile, fingerprint)
+        except (BrokenPipeError, ConnectionError):
+            self.close_connection = True
+        except Exception as exc:
+            if headers_sent:
+                self.close_connection = True
+            else:
+                self._viewer_error(exc)
+        finally:
+            self.viewer_operation_slots.release()
 
     def _read_json(self) -> dict[str, object]:
         content_type = self.headers.get("Content-Type", "")
@@ -642,7 +781,11 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
         path = self._path()
         if path is None:
             return
-        if path == "/api/status":
+        if path == "/api/viewer/manifest":
+            self._serve_viewer_manifest()
+        elif path == "/api/viewer/source" or path.startswith("/api/viewer/source/"):
+            self._serve_viewer_source()
+        elif path == "/api/status":
             self._send_json(
                 HTTPStatus.OK,
                 {
@@ -670,6 +813,11 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = self._path()
         if path is None:
+            return
+        if path in {"/api/viewer/manifest", "/api/viewer/source"} or path.startswith(
+            "/api/viewer/source/"
+        ):
+            self._method_not_allowed("GET")
             return
         if path in {"/api/status", "/api/outputs"} or path == "/" or path.startswith("/static/"):
             self._method_not_allowed("GET")
@@ -707,10 +855,24 @@ class SceneAgentRequestHandler(BaseHTTPRequestHandler):
             _HEAVY_OPERATION_LOCK.release()
 
     def do_HEAD(self) -> None:
-        self._method_not_allowed("GET, POST")
+        path = self._path()
+        if path == "/api/viewer/manifest" or (
+            path is not None
+            and (path == "/api/viewer/source" or path.startswith("/api/viewer/source/"))
+        ):
+            self._method_not_allowed("GET")
+        elif path is not None:
+            self._method_not_allowed("GET, POST")
 
     def do_OPTIONS(self) -> None:
-        self._method_not_allowed("GET, POST")
+        path = self._path()
+        if path == "/api/viewer/manifest" or (
+            path is not None
+            and (path == "/api/viewer/source" or path.startswith("/api/viewer/source/"))
+        ):
+            self._method_not_allowed("GET")
+        elif path is not None:
+            self._method_not_allowed("GET, POST")
 
     do_PUT = do_OPTIONS
     do_PATCH = do_OPTIONS
@@ -733,10 +895,12 @@ def create_server(
     *,
     repository_root: str | Path | None = None,
     web_root: str | Path | None = None,
+    viewer_sources: Mapping[str, ViewerSourceConfig] | None = None,
 ) -> LocalThreadingHTTPServer:
     """Create, but do not start, a loopback-only threaded HTTP server."""
 
     normalized_host = validate_bind_host(host)
+    configured_viewer_sources = normalize_viewer_sources(viewer_sources)
     if not isinstance(port, int) or isinstance(port, bool) or not 0 <= port <= 65535:
         raise ValueError("port must be an integer between 0 and 65535")
     server_type = (
@@ -750,6 +914,10 @@ def create_server(
         Path(web_root) if web_root is not None else Path(__file__).with_name("web")
     )
     server.web_root = configured_web_root.resolve(strict=False)  # type: ignore[attr-defined]
+    server.viewer_sources = configured_viewer_sources  # type: ignore[attr-defined]
+    server.viewer_operation_slots = threading.BoundedSemaphore(  # type: ignore[attr-defined]
+        MAX_CONCURRENT_VIEWER_OPERATIONS
+    )
     return server
 
 
