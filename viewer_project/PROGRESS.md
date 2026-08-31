@@ -10,10 +10,10 @@ viewer. It records project state; it does not replace `SPEC.md` or
 - Current status: M0 and M1 complete; M1 was freshly independently reviewed;
   verdict **SHIP** for the M1 authentic source manifest and bounded transport
   milestone.
-- Last completed checkpoint commit: `99f2ef1` — `checkpoint: define viewer
-  contract and progress ledger`. The new M1 checkpoint is pending creation
-  immediately after this ledger update; no M1 hash exists yet, and this worker
-  creates no commit.
+- Last completed checkpoint commit: `34e3a33` — `checkpoint: add safe viewer
+  scene streaming`. The M0 documentation checkpoint `99f2ef1` remains in the
+  milestone history. This documentation follow-up creates no additional
+  commit.
 - Current viewer files: `viewer_project/SPEC.md`,
   `viewer_project/AGENTS.md`, `viewer_project/PROGRESS.md`, and the M1 files
   `src/scene_agent/viewer.py`, `src/scene_agent/webapp.py`, and
@@ -26,7 +26,8 @@ viewer. It records project state; it does not replace `SPEC.md` or
   bounded to `<=1 MiB`, and HTTP mutation truncation/validation. The browser
   renderer and capture work remain unimplemented.
 - The immutable source remains unchanged. No generated capture/artifact,
-  source mutation, push, or M1 checkpoint commit exists yet.
+  source mutation, or push exists; M1 checkpoint `34e3a33` records the
+  implementation.
 - Preserve these unrelated pre-existing workspace changes; never stage them:
   root `SPEC.md` is modified, and root `editing_agent/` is untracked.
   Existing viewer specification files are also not to be overwritten.
@@ -76,8 +77,9 @@ IDs, or editing.
   pending.
 - 2026-08-31 — M1 — Authentic source manifest and bounded stream: complete and
   freshly independently reviewed, verdict SHIP. M1 proves only safe
-  manifest/transport; its checkpoint is pending creation immediately after
-  this ledger update.
+  manifest/transport.
+- 2026-08-31 — M1 checkpoint `34e3a33` — `checkpoint: add safe viewer scene
+  streaming`: implementation checkpoint; M2 is the next action.
 - M1 — Authentic source manifest and bounded stream: complete.
 - M2 — Thin interactive renderer: pending.
 - M3 — Bird's-eye and capture reproducibility: pending.
